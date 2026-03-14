@@ -1,0 +1,11 @@
+# Klasör bazlı engellemeler
+smartFactoryBackend/node_modules/
+smartFactoryUI/node_modules/
+
+# Gizli anahtarlar ve yerel ayarlar
+.env
+.DS_Store
+Thumbs.db
+
+# React çıktıları
+smartFactoryUI/build/

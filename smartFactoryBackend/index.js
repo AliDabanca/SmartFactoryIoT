@@ -18,32 +18,27 @@ mqttClient.on('connect', () => {
 
 supabase
   .channel('remote-commands')
-  .on('postgres_changes', { 
-    event: 'INSERT', 
-    schema: 'public', 
-    table: 'factory_commands' 
-  }, (payload) => {
-
-    console.log('--- KOMUT ALINDI ---');
-    console.log('Tip:', payload.new.type);
-    
-    mqttClient.publish('dabanca_factory/commands', JSON.stringify(payload.new));
-  })
-  .subscribe((status) => {
-    console.log('Komut Kanalı Durumu:', status); 
+  .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'factory_commands' }, (payload) => {
+    // MQTT'ye gönderirken hedef bandı da ekliyoruz
+    const command = {
+      type: payload.new.type,
+      target_line: payload.new.target_line // 'line_01' veya 'line_02'
+    };
+    mqttClient.publish('dabanca_factory/commands', JSON.stringify(command));
   });
 
-mqttClient.on('message', (topic, message) => { 
+mqttClient.on('message', (topic, message) => {
   try {
     const data = JSON.parse(message.toString());
 
     if (topic === 'dabanca_factory/production/line1') {
-   
+
       supabase
         .from('factory_telemetry')
         .insert([{
           line_id: data.line_id,
           temp: data.temp,
+          humidity: data.humidity,
           speed: data.speed,
           status: data.status,
           gas_alert: data.gas_alert,

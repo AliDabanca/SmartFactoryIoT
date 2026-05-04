@@ -22,6 +22,13 @@ const IconCalendar = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentC
 const IconLock = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>;
 const IconUser = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>;
 const IconUsersGroup = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>;
+const IconCloudUpload = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M16 16l-4 4-4-4" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 12v8" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M7 16a5 5 0 0 1 10 0h1a3 3 0 0 0 0-6 5 5 0 0 0-10 0H7z" />
+  </svg>
+);
 
 // ─── YARDIMCI KART BİLEŞENLERİ (MetricCard, GasCard vb. Aynı) ───
 function MetricCard({ icon, iconBg, iconColor, label, value, sub, subColor, alert }) {
@@ -188,6 +195,12 @@ export default function App() {
   const [authError, setAuthError] = useState('');
 
   const [activeTab, setActiveTab] = useState('live');
+  const [otaVersion, setOtaVersion] = useState('1.1.0');
+  const [otaStatus, setOtaStatus] = useState('Beklemede');
+  const [otaProgress, setOtaProgress] = useState(0);
+  const [otaLoading, setOtaLoading] = useState(false);
+  const [otaMessage, setOtaMessage] = useState('');
+  const otaTimerRef = useRef(null);
   const [timeRange, setTimeRange] = useState('monthly');
   const [historyData, setHistoryData] = useState([]);
   const [liveData, setLiveData] = useState([]);
@@ -195,6 +208,12 @@ export default function App() {
   const [restocking, setRestocking] = useState(false);
   const [restockMsg, setRestockMsg] = useState('');
   const waitingForConfirm = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      if (otaTimerRef.current) clearInterval(otaTimerRef.current);
+    };
+  }, []);
 
   const handleAddUser = async (e) => {
     e.preventDefault();
@@ -215,6 +234,38 @@ export default function App() {
       }
     } catch (err) {
       setUserMsg({ text: '❌ Backend API sunucusuna ulaşılamadı (Port 3001)', type: 'error' });
+    }
+  };
+
+  const handleOtaUpdate = async (e) => {
+    e.preventDefault();
+    if (!isAdmin) return;
+    if (!otaVersion.trim()) {
+      setOtaMessage('Lütfen bir versiyon numarası seçin.');
+      return;
+    }
+
+    setOtaLoading(true);
+    setOtaStatus('İstek gönderiliyor...');
+    setOtaProgress(5);
+    setOtaMessage('');
+
+    try {
+      const res = await fetch('http://localhost:3001/api/ota-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version: otaVersion.trim() })
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || 'OTA isteği başarısız.');
+
+      setOtaMessage('OTA komutu ESP32\'ye gönderildi, cevap bekleniyor...');
+      setOtaStatus('Cihaz yanıtını beklemede');
+    } catch (err) {
+      setOtaLoading(false);
+      setOtaStatus('Hata');
+      setOtaMessage(`OTA hatası: ${err.message}`);
+      setOtaProgress(0);
     }
   };
 
@@ -278,8 +329,44 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!session) return; // Sadece giriş yapmışsa veriyi dinle
+    if (!session) return;
     fetchData();
+
+    // ─── OTA STATUS DİNLEME ───
+    const otaSubscription = supabase
+      .channel('ota-status')
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'ota_updates'
+      }, (payload) => {
+        const status = payload.new.status;
+        console.log('📡 OTA Status:', status);
+
+        if (status === 'started') {
+          setOtaProgress(10);
+          setOtaStatus('Başlatıldı');
+          setOtaMessage('ESP32 OTA simülasyonu başladı...');
+        } else if (status === 'completed') {
+          setOtaProgress(100);
+          setOtaStatus('Tamamlandı ✅');
+          setOtaMessage('OTA simülasyonu başarıyla tamamlandı!');
+          setOtaLoading(false);
+          setTimeout(() => {
+            setOtaProgress(0);
+            setOtaStatus('Beklemede');
+            setOtaMessage('');
+          }, 3000);
+        } else if (status === 'failed') {
+          setOtaProgress(0);
+          setOtaStatus('Başarısız ❌');
+          setOtaMessage('OTA güncellemesi başarısız oldu.');
+          setOtaLoading(false);
+        }
+      })
+      .subscribe();
+
+    // ─── FACTORY TELEMETRY DİNLEME (Mevcut) ───
     const subscription = supabase.channel('factory-updates').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'factory_telemetry' }, (payload) => {
       setHistoryData(prev => [...prev, payload.new]);
       setLiveData(prev => [...prev.slice(-29), payload.new]);
@@ -288,7 +375,11 @@ export default function App() {
         waitingForConfirm.current = false; setRestocking(false); setRestockMsg('✓ Stok güncellendi'); setTimeout(() => setRestockMsg(''), 3000);
       }
     }).subscribe();
-    return () => subscription.unsubscribe();
+
+    return () => {
+      otaSubscription.unsubscribe();
+      subscription.unsubscribe();
+    };
   }, [session]);
 
   // Auth Yükleniyorsa Ekranı
@@ -421,7 +512,9 @@ export default function App() {
         {/*                       SEKME 3: KULLANICI YÖNETİMİ                  */}
         {/* ══════════════════════════════════════════════════════════════════ */}
         {activeTab === 'users' && isAdmin && (
-          <div className="animate-fade-in max-w-2xl mx-auto">
+          <div className="animate-fade-in max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8">
+
+            {/* ─── SOL TARAF: KULLANICI EKLEME KARTI (YEŞİL) ─── */}
             <div className="relative overflow-hidden rounded-2xl border border-factory-border bg-factory-card p-8 shadow-[0_0_30px_rgba(16,185,129,0.05)]">
               <div className="absolute top-0 left-0 right-0 h-[2px] bg-emerald-500/40" />
 
@@ -462,8 +555,8 @@ export default function App() {
 
                 {userMsg.text && (
                   <div className={`p-3 rounded border text-xs font-mono font-bold text-center ${userMsg.type === 'error' ? 'bg-red-500/10 border-red-500/20 text-neon-red' :
-                      userMsg.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' :
-                        'bg-blue-500/10 border-blue-500/20 text-blue-400'
+                    userMsg.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' :
+                      'bg-blue-500/10 border-blue-500/20 text-blue-400'
                     }`}>
                     {userMsg.text}
                   </div>
@@ -475,8 +568,68 @@ export default function App() {
                 </button>
               </form>
             </div>
+
+            {/* ─── SAĞ TARAF: OTA GÜNCELLEMESİ KARTI (MOR) ─── */}
+            <div className="relative overflow-hidden rounded-2xl border border-factory-border bg-factory-card p-8 shadow-[0_0_30px_rgba(168,85,247,0.05)]">
+              <div className="absolute top-0 left-0 right-0 h-[2px] bg-purple-500/40" />
+
+              <div className="mb-8">
+                <p className="text-xs font-mono uppercase tracking-widest text-purple-300 mb-2">OTA Güncelleme</p>
+                <h2 className="text-2xl font-display font-bold text-white">Firmware Simülasyonu</h2>
+                <p className="text-sm font-mono text-factory-muted mt-2">Wokwi ESP32 için görünürde bir OTA güncellemesi başlatın.</p>
+              </div>
+
+              <form onSubmit={handleOtaUpdate} className="space-y-5">
+                <div>
+                  <label className="block text-xs font-mono text-factory-muted mb-2 uppercase tracking-wider">OTA Versiyon Seç</label>
+                  <select
+                    value={otaVersion}
+                    onChange={(e) => setOtaVersion(e.target.value)}
+                    className="w-full bg-[#0d1428] border border-factory-border text-white text-sm rounded-lg focus:ring-purple-500 focus:border-purple-500 block p-3 font-mono cursor-pointer"
+                  >
+                    <option value="1.0.0">v1.0.0 (Güncel)</option>
+                    <option value="1.0.5">v1.0.5 (Güvenlik Patch)</option>
+                    <option value="1.1.0">v1.1.0 (OTA Desteği)</option>
+                    <option value="1.2.0">v1.2.0 (Geliştirilmiş)</option>
+                    <option value="2.0.0">v2.0.0 (Beta)</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs font-mono text-factory-muted">
+                    <span>OTA İlerleme</span>
+                    <span>{otaProgress}%</span>
+                  </div>
+                  <div className="w-full h-3 rounded-full bg-[#111827] overflow-hidden border border-factory-border">
+                    <div
+                      className={`h-full rounded-full transition-all ${otaStatus === 'Tamamlandı' ? 'bg-neon-green' : otaStatus === 'Hata' ? 'bg-neon-red' : 'bg-neon-purple'}`}
+                      style={{ width: `${otaProgress}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-xs font-mono uppercase tracking-widest text-factory-muted mb-2">Durum</p>
+                  <p className={`font-bold text-sm ${otaStatus === 'Hata' ? 'text-neon-red' : otaStatus === 'Tamamlandı' ? 'text-neon-green' : 'text-neon-purple'}`}>{otaStatus}</p>
+                </div>
+
+                {otaMessage && (
+                  <div className="text-xs font-mono text-factory-muted bg-[#0d1428] p-3 rounded border border-factory-border">
+                    {otaMessage}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={otaLoading}
+                  className="w-full py-3.5 mt-4 bg-purple-500/10 border border-purple-500/50 hover:bg-purple-500/20 text-purple-300 font-mono font-bold rounded-xl transition-all shadow-[0_0_15px_rgba(168,85,247,0.1)] active:scale-95 disabled:opacity-50"
+                >
+                  {otaLoading ? 'OTA BAŞLATILIYOR...' : '📡 OTA GÜNCELLEMESİ BAŞLAT'}
+                </button>
+              </form>
+            </div>
+
           </div>
-        )}  
+        )}
 
       </div>
     </div>

@@ -5,7 +5,7 @@ const express = require('express');
 const cors = require('cors');
 
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_KEY; // DİKKAT: Service Role Key olmalı!
+const supabaseKey = process.env.SUPABASE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // ─── 1. REST API SUNUCUSU (Kullanıcı Yönetimi İçin) ───
@@ -17,15 +17,13 @@ app.post('/api/add-user', async (req, res) => {
   const { email, password, role } = req.body;
 
   try {
-    // 1. Supabase Auth'a yeni kullanıcıyı ekle (Sadece Service Key ile yapılabilir)
     const { data: userRecord, error: authError } = await supabase.auth.admin.createUser({
       email: email,
       password: password,
-      email_confirm: true // E-posta onayını atla, direkt aktif et
+      email_confirm: true
     });
     if (authError) throw authError;
 
-    // 2. Oluşan kullanıcının UID'sini alıp user_roles tablosuna yetkisini yaz
     const { error: dbError } = await supabase.from('user_roles').insert([
       { user_id: userRecord.user.id, role: role }
     ]);
@@ -40,23 +38,55 @@ app.post('/api/add-user', async (req, res) => {
   }
 });
 
+app.post('/api/ota-update', async (req, res) => {
+  const { version } = req.body;
+  try {
+    // Önce MQTT komutu gönder
+    const command = { type: 'OTA_UPDATE', version: version };
+    const publishResult = await new Promise((resolve, reject) => {
+      mqttClient.publish('dabanca_factory/commands', JSON.stringify(command), (err) => {
+        if (err) reject(err);
+        else resolve(true);
+      });
+    });
+
+    if (!publishResult) throw new Error('MQTT yayını başarısız');
+
+    // MQTT başarılı olursa, Supabase'e kaydet
+    const { error } = await supabase.from('ota_updates').insert([{
+      version: version,
+      status: 'started',
+      device_id: 'line_01'
+    }]);
+    if (error) throw error;
+
+    console.log(`📡 OTA başlatıldı: v${version}`);
+    res.json({ success: true, message: 'OTA güncelleme başlatıldı.' });
+  } catch (err) {
+    console.error('OTA hatası:', err.message);
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
 app.listen(3001, () => console.log('🌐 API Sunucusu 3001 portunda aktif! (Kullanıcı Yönetimi İçin)'));
 
 // ─── 2. MQTT KÖPRÜSÜ (Şifreli IoT Haberleşmesi) ───
-const mqttClient = mqtt.connect('mqtts://broker.hivemq.com', {
+const mqttOptions = {
   port: 8883,
-  rejectUnauthorized: false
-});
+  rejectUnauthorized: process.env.NODE_ENV === 'production'
+};
+
+const mqttClient = mqtt.connect('mqtts://broker.hivemq.com', mqttOptions);
 
 mqttClient.on('connect', () => {
   console.log('✅ TLS Şifreli MQTT Sunucusuna Bağlanıldı!');
   mqttClient.subscribe('dabanca_factory/production/line1');
+  mqttClient.subscribe('dabanca_factory/commands');
 });
 
 mqttClient.on('message', async (topic, message) => {
   try {
     const data = JSON.parse(message.toString());
-    // console.log(`🔒 Gelen Veri: ${JSON.stringify(data)}`); // Konsol kalabalık olmasın dersen bunu kapatabilirsin
     const { error } = await supabase.from('factory_telemetry').insert([{
       line_id: data.line_id, speed: data.speed, temp: data.temp, humidity: data.humidity,
       status: data.status, total_prod: data.total_prod, stock: data.stock,

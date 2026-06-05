@@ -107,8 +107,6 @@ The asynchronous deployment pipeline targets automatic node management:
    git clone [https://github.com/your-username/smart-factory-iot.git](https://github.com/your-username/smart-factory-iot.git)
    cd smart-factory-iot
 Environment Synchronization (.env):
-
-Kod snippet'i
 REACT_APP_SUPABASE_URL=your_project_url
 REACT_APP_SUPABASE_ANON_KEY=your_project_anon_key
 Trigger Runtime Clusters:

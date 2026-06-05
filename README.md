@@ -3,8 +3,6 @@
 
 <div align="center">
 
-![GitHub top language](https://img.shields.io/github/languages/top/your-username/smart-factory-iot?color=blueviolet&style=for-the-badge)
-![GitHub code size in bytes](https://img.shields.io/github/languages/code-size/your-username/smart-factory-iot?color=darkgreen&style=for-the-badge)
 ![Supabase](https://img.shields.io/badge/Database-Supabase-blue?style=for-the-badge&logo=supabase)
 ![MQTT](https://img.shields.io/badge/Protocol-MQTTS-orange?style=for-the-badge&logo=mqtt)
 ![Security](https://img.shields.io/badge/Security-RLS%20Hardened-red?style=for-the-badge)
